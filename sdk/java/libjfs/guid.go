@@ -22,41 +22,45 @@ import (
 	"fmt"
 	"os/user"
 	"strconv"
+	"strings"
 	"sync"
 )
 
-const (
-	guidModeLegacy = "legacy"
-	guidModeInt31  = "int31"
-	guidModeUint32 = "uint32"
-	guidInt31Mask  = uint32(0x7FFFFFFF)
-)
+const guidInt31Mask = uint32(0x7FFFFFFF)
 
-func parseGuidMode(mode string) (string, error) {
-	if mode == "" {
-		return guidModeLegacy, nil
+func parseGuidMask(value string) (string, error) {
+	if value == "" {
+		return "", nil
 	}
-	switch mode {
-	case guidModeLegacy, guidModeInt31, guidModeUint32:
-		return mode, nil
-	default:
-		return "", fmt.Errorf("invalid guid-mode %q: expected legacy, int31, or uint32", mode)
+	original := value
+	base := 10
+	if strings.HasPrefix(value, "0x") || strings.HasPrefix(value, "0X") {
+		base = 16
+		value = value[2:]
 	}
+	mask, err := strconv.ParseUint(value, base, 32)
+	if err != nil {
+		return "", fmt.Errorf("invalid guid-mask %q: expected a decimal or hexadecimal uint32 value", original)
+	}
+	if mask == 0 {
+		return "", fmt.Errorf("invalid guid-mask: value must be greater than zero")
+	}
+	return strconv.FormatUint(mask, 10), nil
 }
 
-func guidMask(mode, metaName string) uint32 {
-	switch mode {
-	case guidModeInt31:
-		return guidInt31Mask
-	case guidModeUint32:
-		return 0
-	default:
-		switch metaName {
-		case "mysql", "postgres", "sqlite3":
-			return guidInt31Mask
-		default:
-			return 0
+func guidMask(value, metaName string) (uint32, error) {
+	if value != "" {
+		mask, err := strconv.ParseUint(value, 10, 32)
+		if err != nil {
+			return 0, fmt.Errorf("invalid normalized guid-mask %q: %w", value, err)
 		}
+		return uint32(mask), nil
+	}
+	switch metaName {
+	case "mysql", "postgres", "sqlite3":
+		return guidInt31Mask, nil
+	default:
+		return 0, nil
 	}
 }
 

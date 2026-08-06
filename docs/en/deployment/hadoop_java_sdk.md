@@ -200,7 +200,7 @@ Please refer to the following table to set the relevant parameters of the JuiceF
 | `juicefs.supergroup`    | `supergroup`  | The super user group                                                                                                                                                        |
 | `juicefs.users`         | `null`        | The path of username and UID list file, e.g. `jfs://name/etc/users`. The file format is `<username>:<UID>`, one user per line.                                              |
 | `juicefs.groups`        | `null`        | The path of group name, GID and group members list file, e.g. `jfs://name/etc/groups`. The file format is `<group-name>:<GID>:<username1>,<username2>`, one group per line. |
-| `juicefs.guid-mode`     | `legacy`      | Generated UID/GID mode: `legacy`, `int31`, or `uint32`. `legacy` keeps the existing engine-dependent behavior.                                                            |
+| `juicefs.guid-mask`     |               | Bit mask applied to generated UID/GID values. Accepts a non-zero unsigned 32-bit value in decimal or hexadecimal notation. An empty value keeps the existing engine-dependent behavior.                        |
 | `juicefs.umask`         | `null`        | The umask used when creating files and directories (e.g. `0022`), default value is `fs.permissions.umask-mode`.                                                             |
 | `juicefs.push-gateway`  |               | [Prometheus Pushgateway](https://github.com/prometheus/pushgateway) address, format is `<host>:<port>`.                                                                     |
 | `juicefs.push-auth`     |               | [Prometheus basic auth](https://prometheus.io/docs/guides/basic-auth) information, format is `<username>:<password>`.                                                       |
@@ -218,27 +218,27 @@ Please refer to the following table to set the relevant parameters of the JuiceF
 | `juicefs.skip-dir-mtime`              | 100ms         | Minimal duration to modify parent dir mtime.                                                                                                                                |
 | `juicefs.subdir`        |               | Allow access only to the subpaths of this directory. Multiple paths can be specified, separated by commas. All other paths, including the root or sibling directories, will be denied access.                                     |
 
-`juicefs.guid-mode` only affects UID/GID values generated for users and groups without an explicit mapping. `int31` always limits generated IDs to `2147483647`, while `uint32` uses the full unsigned 32-bit range. Before using `uint32` with a MySQL or PostgreSQL metadata engine, change the `uid` and `gid` columns in the `node` table to `BIGINT`. All Hadoop SDK clients accessing the same volume must use the same mode. Do not change the mode of a populated volume unless it matches the UID/GID format already stored in its metadata.
+`juicefs.guid-mask` only affects UID/GID values generated for users and groups without an explicit mapping. Use `0x7fffffff` (decimal `2147483647`) to limit generated IDs to the signed 31-bit range, or `0xffffffff` (decimal `4294967295`) to retain the full unsigned 32-bit value. Zero is not a valid mask. If this option is not set, the Hadoop SDK preserves its existing behavior: SQL metadata engines use `0x7fffffff`, while Redis and KV metadata engines retain the full unsigned 32-bit value. Before using `0xffffffff` with a MySQL or PostgreSQL metadata engine, change the `uid` and `gid` columns in the `node` table to `BIGINT`. All Hadoop SDK clients accessing the same volume must use the same mask. Do not change the mask of a populated volume unless it matches the UID/GID format already stored in its metadata.
 
-##### Configure `guid-mode` when changing metadata engines
+##### Configure `guid-mask` when changing metadata engines
 
-The mode must follow the UID/GID format used by the source volume, rather than the type of the target metadata engine. If the source volume already has an explicit `guid-mode`, continue using that mode on the target. For volumes using the default `legacy` mode, configure the migration as follows:
+The mask must follow the UID/GID format used by the source volume, rather than the type of the target metadata engine. If the source volume already has an explicit `guid-mask`, continue using the same value on the target. For volumes that did not previously configure this option, configure the migration as follows:
 
-| Migration direction | Mode used by the source volume | Configuration for the target volume | Prerequisite |
+| Migration direction | Mask used by the source volume | Configuration for the target volume | Prerequisite |
 |---------------------|--------------------------------|-------------------------------------|--------------|
-| Redis/KV to MySQL | `uint32` | `juicefs.guid-mode=uint32` | The MySQL `node.uid` and `node.gid` columns must be `BIGINT` before migrated inode data is written. |
-| MySQL to Redis/KV | `int31` | `juicefs.guid-mode=int31` | None. The explicit mode prevents Redis/KV clients from switching to full `uint32` IDs. |
+| Redis/KV to MySQL | `0xffffffff` | `juicefs.guid-mask=0xffffffff` | The MySQL `node.uid` and `node.gid` columns must be `BIGINT` before migrated inode data is written. |
+| MySQL to Redis/KV | `0x7fffffff` | `juicefs.guid-mask=0x7fffffff` | None. The explicit mask prevents Redis/KV clients from switching to full unsigned 32-bit IDs. |
 
 For example, after migrating a volume named `myjfs` from Redis/KV to MySQL, configure every Hadoop SDK client with:
 
 ```xml
 <property>
-  <name>juicefs.myjfs.guid-mode</name>
-  <value>uint32</value>
+  <name>juicefs.myjfs.guid-mask</name>
+  <value>0xffffffff</value>
 </property>
 ```
 
-When migrating `myjfs` from MySQL to Redis/KV, use the same configuration with `<value>int31</value>`. Stop all clients before the migration and restart them with the new configuration after it completes. Changing MySQL columns to `BIGINT` after inode data has already been imported is too late to prevent an out-of-range failure during the import.
+When migrating `myjfs` from MySQL to Redis/KV, use the same configuration with `<value>0x7fffffff</value>`. Stop all clients before the migration and restart them with the new configuration after it completes. Changing MySQL columns to `BIGINT` after inode data has already been imported is too late to prevent an out-of-range failure during the import.
 
 #### Multiple file systems configuration
 

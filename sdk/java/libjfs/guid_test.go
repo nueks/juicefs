@@ -22,27 +22,31 @@ import (
 	"testing"
 )
 
-func TestParseGuidMode(t *testing.T) {
+func TestParseGuidMask(t *testing.T) {
 	cases := []struct {
 		name    string
-		mode    string
+		value   string
 		want    string
 		wantErr bool
 	}{
-		{"missing mode", "", guidModeLegacy, false},
-		{"legacy mode", guidModeLegacy, guidModeLegacy, false},
-		{"int31 mode", guidModeInt31, guidModeInt31, false},
-		{"uint32 mode", guidModeUint32, guidModeUint32, false},
-		{"invalid mode", "wide", "", true},
+		{"missing mask", "", "", false},
+		{"decimal int31 mask", "2147483647", "2147483647", false},
+		{"hex int31 mask", "0x7fffffff", "2147483647", false},
+		{"decimal uint32 mask", "4294967295", "4294967295", false},
+		{"hex uint32 mask", "0xffffffff", "4294967295", false},
+		{"zero mask", "0", "", true},
+		{"negative mask", "-1", "", true},
+		{"overflow mask", "0x100000000", "", true},
+		{"invalid mask", "wide", "", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := parseGuidMode(c.mode)
+			got, err := parseGuidMask(c.value)
 			if (err != nil) != c.wantErr {
-				t.Fatalf("parseGuidMode(%q) error = %v, wantErr %v", c.mode, err, c.wantErr)
+				t.Fatalf("parseGuidMask(%q) error = %v, wantErr %v", c.value, err, c.wantErr)
 			}
 			if got != c.want {
-				t.Fatalf("parseGuidMode(%q) = %q, want %q", c.mode, got, c.want)
+				t.Fatalf("parseGuidMask(%q) = %q, want %q", c.value, got, c.want)
 			}
 		})
 	}
@@ -51,24 +55,30 @@ func TestParseGuidMode(t *testing.T) {
 func TestGuidMask(t *testing.T) {
 	cases := []struct {
 		name     string
-		mode     string
+		mask     string
 		metaName string
 		want     uint32
+		wantErr  bool
 	}{
-		{"uint32 on mysql", guidModeUint32, "mysql", 0},
-		{"uint32 on redis", guidModeUint32, "redis", 0},
-		{"int31 on redis", guidModeInt31, "redis", 0x7FFFFFFF},
-		{"int31 on sqlite", guidModeInt31, "sqlite3", 0x7FFFFFFF},
-		{"legacy mysql", guidModeLegacy, "mysql", 0x7FFFFFFF},
-		{"legacy postgres", guidModeLegacy, "postgres", 0x7FFFFFFF},
-		{"legacy sqlite3", guidModeLegacy, "sqlite3", 0x7FFFFFFF},
-		{"legacy redis", guidModeLegacy, "redis", 0},
-		{"legacy tikv", guidModeLegacy, "tikv", 0},
+		{"explicit uint32 on mysql", "4294967295", "mysql", 0xFFFFFFFF, false},
+		{"explicit uint32 on redis", "4294967295", "redis", 0xFFFFFFFF, false},
+		{"explicit int31 on redis", "2147483647", "redis", 0x7FFFFFFF, false},
+		{"explicit int31 on sqlite", "2147483647", "sqlite3", 0x7FFFFFFF, false},
+		{"default mysql", "", "mysql", 0x7FFFFFFF, false},
+		{"default postgres", "", "postgres", 0x7FFFFFFF, false},
+		{"default sqlite3", "", "sqlite3", 0x7FFFFFFF, false},
+		{"default redis", "", "redis", 0, false},
+		{"default tikv", "", "tikv", 0, false},
+		{"invalid normalized mask", "invalid", "redis", 0, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := guidMask(c.mode, c.metaName); got != c.want {
-				t.Fatalf("guidMask(%q, %q) = %#x, want %#x", c.mode, c.metaName, got, c.want)
+			got, err := guidMask(c.mask, c.metaName)
+			if (err != nil) != c.wantErr {
+				t.Fatalf("guidMask(%q, %q) error = %v, wantErr %v", c.mask, c.metaName, err, c.wantErr)
+			}
+			if got != c.want {
+				t.Fatalf("guidMask(%q, %q) = %#x, want %#x", c.mask, c.metaName, got, c.want)
 			}
 		})
 	}
@@ -77,7 +87,7 @@ func TestGuidMask(t *testing.T) {
 // TestGenGuidRespectsMask makes sure the same volume+name yields a stable id and
 // that the mask decides whether the full uint32 range is used. It also captures
 // the cross-engine bug from issue #7338: a hash whose high bit is set differs
-// between the uint32 and int31 modes.
+// between the uint32 and int31 masks.
 func TestGenGuidRespectsMask(t *testing.T) {
 	m := &mapping{salt: "uidcheck"}
 
@@ -95,9 +105,9 @@ func TestGenGuidRespectsMask(t *testing.T) {
 		t.Skip("no sample name with high-bit hash found")
 	}
 
-	m.mask = 0
+	m.mask = math.MaxUint32
 	if got := m.genGuid(name); got != raw {
-		t.Fatalf("uint32 mode is not deterministic: %d != %d", got, raw)
+		t.Fatalf("uint32 mask is not deterministic: %d != %d", got, raw)
 	}
 	m.mask = 0x7FFFFFFF
 	int31 := m.genGuid(name)

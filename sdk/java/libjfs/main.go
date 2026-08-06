@@ -390,7 +390,7 @@ type javaConf struct {
 	PushGraphite        string `json:"pushGraphite"`
 	PushRemoteWrite     string `json:"pushRemoteWrite"`
 	PushRemoteWriteAuth string `json:"pushRemoteWriteAuth"`
-	GuidMode            string `json:"guidMode"`
+	GuidMask            string `json:"guidMask"`
 	Caller              int    `json:"caller"`
 	Subdir              string `json:"subdir"`
 
@@ -423,7 +423,12 @@ func getOrCreate(name, user, groups, superuser, supergroup string, conf javaConf
 		if jfs == nil {
 			return 0
 		}
-		m.mask = guidMask(conf.GuidMode, jfs.Meta().Name())
+		var err error
+		m.mask, err = guidMask(conf.GuidMask, jfs.Meta().Name())
+		if err != nil {
+			logger.Errorf("invalid configuration: %s", err)
+			return 0
+		}
 		logger.Infof("JuiceFileSystem created for user:%s groups:%s", user, groups)
 	}
 	w := &wrapper{jfs, name, nil, m, user, superuser, supergroup, conf}
@@ -565,7 +570,7 @@ func jfs_init(credentialPtr uintptr, count int32, cname, cjsonConf, cuser, group
 			logger.Fatalf("invalid json")
 		}
 	}
-	jConf.GuidMode, err = parseGuidMode(jConf.GuidMode)
+	jConf.GuidMask, err = parseGuidMask(jConf.GuidMask)
 	if err != nil {
 		logger.Errorf("invalid configuration: %s", err)
 		return 0
