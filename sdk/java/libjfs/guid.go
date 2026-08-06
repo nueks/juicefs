@@ -19,10 +19,46 @@ package main
 import (
 	"crypto/md5"
 	"encoding/binary"
+	"fmt"
 	"os/user"
 	"strconv"
 	"sync"
 )
+
+const (
+	guidModeLegacy = "legacy"
+	guidModeInt31  = "int31"
+	guidModeUint32 = "uint32"
+	guidInt31Mask  = uint32(0x7FFFFFFF)
+)
+
+func parseGuidMode(mode string) (string, error) {
+	if mode == "" {
+		return guidModeLegacy, nil
+	}
+	switch mode {
+	case guidModeLegacy, guidModeInt31, guidModeUint32:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("invalid guid-mode %q: expected legacy, int31, or uint32", mode)
+	}
+}
+
+func guidMask(mode, metaName string) uint32 {
+	switch mode {
+	case guidModeInt31:
+		return guidInt31Mask
+	case guidModeUint32:
+		return 0
+	default:
+		switch metaName {
+		case "mysql", "postgres", "sqlite3":
+			return guidInt31Mask
+		default:
+			return 0
+		}
+	}
+}
 
 type pwent struct {
 	id   uint32

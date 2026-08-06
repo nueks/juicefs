@@ -200,6 +200,7 @@ Please refer to the following table to set the relevant parameters of the JuiceF
 | `juicefs.supergroup`    | `supergroup`  | The super user group                                                                                                                                                        |
 | `juicefs.users`         | `null`        | The path of username and UID list file, e.g. `jfs://name/etc/users`. The file format is `<username>:<UID>`, one user per line.                                              |
 | `juicefs.groups`        | `null`        | The path of group name, GID and group members list file, e.g. `jfs://name/etc/groups`. The file format is `<group-name>:<GID>:<username1>,<username2>`, one group per line. |
+| `juicefs.guid-mode`     | `legacy`      | Generated UID/GID mode: `legacy`, `int31`, or `uint32`. `legacy` keeps the existing engine-dependent behavior.                                                            |
 | `juicefs.umask`         | `null`        | The umask used when creating files and directories (e.g. `0022`), default value is `fs.permissions.umask-mode`.                                                             |
 | `juicefs.push-gateway`  |               | [Prometheus Pushgateway](https://github.com/prometheus/pushgateway) address, format is `<host>:<port>`.                                                                     |
 | `juicefs.push-auth`     |               | [Prometheus basic auth](https://prometheus.io/docs/guides/basic-auth) information, format is `<username>:<password>`.                                                       |
@@ -216,6 +217,28 @@ Please refer to the following table to set the relevant parameters of the JuiceF
 | `juicefs.heartbeat`     | 12            | Heartbeat interval (in seconds) between client and metadata engine. It's recommended that all clients use the same value.                                                   |
 | `juicefs.skip-dir-mtime`              | 100ms         | Minimal duration to modify parent dir mtime.                                                                                                                                |
 | `juicefs.subdir`        |               | Allow access only to the subpaths of this directory. Multiple paths can be specified, separated by commas. All other paths, including the root or sibling directories, will be denied access.                                     |
+
+`juicefs.guid-mode` only affects UID/GID values generated for users and groups without an explicit mapping. `int31` always limits generated IDs to `2147483647`, while `uint32` uses the full unsigned 32-bit range. Before using `uint32` with a MySQL or PostgreSQL metadata engine, change the `uid` and `gid` columns in the `node` table to `BIGINT`. All Hadoop SDK clients accessing the same volume must use the same mode. Do not change the mode of a populated volume unless it matches the UID/GID format already stored in its metadata.
+
+##### Configure `guid-mode` when changing metadata engines
+
+The mode must follow the UID/GID format used by the source volume, rather than the type of the target metadata engine. If the source volume already has an explicit `guid-mode`, continue using that mode on the target. For volumes using the default `legacy` mode, configure the migration as follows:
+
+| Migration direction | Mode used by the source volume | Configuration for the target volume | Prerequisite |
+|---------------------|--------------------------------|-------------------------------------|--------------|
+| Redis/KV to MySQL | `uint32` | `juicefs.guid-mode=uint32` | The MySQL `node.uid` and `node.gid` columns must be `BIGINT` before migrated inode data is written. |
+| MySQL to Redis/KV | `int31` | `juicefs.guid-mode=int31` | None. The explicit mode prevents Redis/KV clients from switching to full `uint32` IDs. |
+
+For example, after migrating a volume named `myjfs` from Redis/KV to MySQL, configure every Hadoop SDK client with:
+
+```xml
+<property>
+  <name>juicefs.myjfs.guid-mode</name>
+  <value>uint32</value>
+</property>
+```
+
+When migrating `myjfs` from MySQL to Redis/KV, use the same configuration with `<value>int31</value>`. Stop all clients before the migration and restart them with the new configuration after it completes. Changing MySQL columns to `BIGINT` after inode data has already been imported is too late to prevent an out-of-range failure during the import.
 
 #### Multiple file systems configuration
 
